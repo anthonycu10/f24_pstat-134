@@ -1,1 +1,5 @@
-this directory contains my homework assignments (as .qmd/HTML files) done in Python and R
+this directory contains my homework assignments (as .qmd/.ipynb & HTML files) done in Python and R
+
+ /\_/\  
+( o.o ) 
+ > ^ <
