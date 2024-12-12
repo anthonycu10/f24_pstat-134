@@ -1,0 +1,9 @@
+This homework was using Natural Lanauge Processing (NLP) on Spotify reviews invovling:
+
+- data cleaning
+
+- TF-IDF vectorizer
+
+- network graphs of bigrams
+
+- linear support vector machine 
