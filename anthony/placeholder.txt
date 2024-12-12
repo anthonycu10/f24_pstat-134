@@ -1,0 +1,1 @@
+this directory contains my homework assignments (as .qmd/HTML files) done in Python and R
