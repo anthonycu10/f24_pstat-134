@@ -1,0 +1,602 @@
+---
+title: "Homework 3"
+author: "PSTAT 134/234"
+format:
+  html:
+    toc: true
+    toc-location: left
+    toc-depth: 4
+    embed-resources: true
+    theme: simplex
+editor: visual
+---
+
+## Homework 3
+
+![Star Trek ships.](star_trek.jpeg)
+
+For this homework assignment, we'll be working with a dataset called [Spaceship Titanic](https://www.kaggle.com/competitions/spaceship-titanic/overview). It is a simulated dataset used for a popular Kaggle competition, intended to be similar to the very famous Titanic dataset. The premise of the Spaceship Titanic data is that it is currently the year 2912. You have received a transmission from four lightyears away, sent by the Spaceship Titanic, which was launched a month ago.
+
+The Titanic set out with about 13,000 passengers who were emigrating from our solar system to three newly habitable exoplanets. However, it collided with a spacetime anomaly hidden in a dust cloud, and as a result, although the ship remained intact, half of the passengers on board were transported to an alternate dimension. Your challenge is to predict which passengers were transported, using records recovered from the spaceship's damaged computer system.
+
+The dataset is provided in `/data`, along with a codebook describing each variable. You should read the dataset into your preferred coding language (R or Python) and familiarize yourself with each variable.
+
+We will use this dataset for the purposes of practicing our data visualization and feature engineering skills.
+
+```{r library, warning = F}
+# data manipulation
+library(tidyverse)
+library(naniar)
+library(statip)
+library(janitor)
+
+# data visualization
+library(ggplot2)
+library(corrplot)
+
+# data modeling
+library(tidymodels)
+library(vip)
+
+titanic <- read_csv('~/Desktop/Projects/PSTAT 134/Homework 3/data/spaceship_titanic.csv')
+# note that when you use read.csv() vs read_csv() there is difference in how NAs are detected (ie empty characters in chr columns)
+
+# change column names to snake lower case
+titanic <- titanic %>% clean_names() 
+```
+
+### Exercise 1
+
+Which variables have missing values? What percentage of these variables is missing? What percentage of the overall dataset is missing?
+
+```{r missing data}
+vis_miss(titanic)
+```
+
+All variables except 'passenger_id' and 'transported' have missing values. About 2% of each individual feature is missing. About 1.9% of the whole dataset is missing.
+
+```{r summary}
+summary(titanic)
+```
+
+### Exercise 2
+
+Use mode imputation to fill in any missing values of `home_planet`, `cryo_sleep`, `destination`, and `vip`. Drop any observations with a missing value of `cabin` (there are too many possible values).
+
+Use median imputation to fill in any missing values of `age`. Rather than imputing with the overall mean of `age`, impute with the median age of the corresponding `vip` group. (For example, if someone who is a VIP is missing their age, replace their missing age value with the median age of all passengers who are **also** VIPs).
+
+For passengers missing any of the expenditure variables (`room_service`, `food_court`, `shopping_mall`, `spa`, or `vr_deck`), handle them in this way:
+
+-   If all their observed expenditure values are $0$, **or** if they are in cryo-sleep, replace their missing value(s) with $0$.
+
+-   For the remaining missing expenditure values, use mean imputation.
+
+```{r data imputation for missing values}
+# mode imputation
+titanic_cleaned <- titanic %>% 
+  mutate(HomePlanet = case_when(
+    is.na(HomePlanet) ~ mfv(HomePlanet),
+    .default = HomePlanet), 
+    CryoSleep = case_when(
+      is.na(CryoSleep) ~ mfv(CryoSleep),
+      .default = CryoSleep),
+    Destination = case_when(
+      is.na(Destination) ~ mfv(Destination),
+      .default = Destination),
+    VIP = case_when(
+      is.na(VIP) ~ mfv(VIP),
+      .default = VIP))
+
+# drop missing cabins
+titanic_cleaned <- titanic_cleaned %>% filter(!is.na(Cabin))
+
+# median imputation
+titanic_cleaned <- titanic_cleaned %>% 
+  mutate(Age = case_when(
+    VIP == TRUE & is.na(Age) ~ median(titanic$Age[titanic$VIP == TRUE], na.rm = T),
+    VIP == FALSE & is.na(Age) ~ median(titanic$Age[titanic$VIP == F], na.rm = T),
+    .default = Age)
+)
+
+# expenditure variables
+# method 1 (this is not doing what the solution says b/c applies a condition across columns instead of rowwise)
+t1 <- titanic_cleaned %>%
+  mutate(across(c(RoomService, FoodCourt, ShoppingMall, Spa, VRDeck), 
+           ~ if_else(if_all(c(RoomService, FoodCourt, ShoppingMall, Spa, VRDeck), 
+                            ~ is.na(.) | . == 0) | CryoSleep == T, 0, mean(., na.rm = T))))
+
+# method 2 (correct solution)
+t2 <- titanic_cleaned %>%
+  rowwise() %>%
+  mutate(sums = sum(c(RoomService, FoodCourt, ShoppingMall,
+                   Spa, VRDeck), na.rm = T)) %>% 
+  mutate(RoomService = case_when(
+    is.na(RoomService) & (sums == 0 | isTRUE(CryoSleep)) ~ 0,
+    is.na(RoomService) & (sums != 0 & isFALSE(CryoSleep)) ~ mean(titanic_cleaned$RoomService, na.rm = T),
+    .default = RoomService
+  ),
+  FoodCourt = case_when(
+    is.na(FoodCourt) & (sums == 0 | isTRUE(CryoSleep)) ~ 0,
+    is.na(FoodCourt) & (sums != 0 & isFALSE(CryoSleep)) ~ mean(titanic_cleaned$FoodCourt, na.rm = T),
+    .default = FoodCourt
+  ),
+  ShoppingMall = case_when(
+    is.na(ShoppingMall) & (sums == 0 | isTRUE(CryoSleep)) ~ 0,
+    is.na(ShoppingMall) & (sums != 0 & isFALSE(CryoSleep)) ~ mean(titanic_cleaned$ShoppingMall, na.rm = T),
+    .default = ShoppingMall
+  ),
+  Spa = case_when(
+    is.na(Spa) & (sums == 0 | isTRUE(CryoSleep)) ~ 0,
+    is.na(Spa) & (sums != 0 & isFALSE(CryoSleep)) ~ mean(titanic_cleaned$Spa, na.rm = T),
+    .default = Spa
+  ),
+  VRDeck = case_when(
+    is.na(VRDeck) & (sums == 0 | isTRUE(CryoSleep)) ~ 0,
+    is.na(VRDeck) & (sums != 0 & isFALSE(CryoSleep)) ~ mean(titanic_cleaned$VRDeck, na.rm = T),
+    .default = VRDeck
+  )) %>% 
+  select(-sums)
+
+all.equal(t1, t2)
+
+titanic_cleaned <- t2
+
+vis_miss(titanic_cleaned)
+```
+
+### Exercise 3
+
+What are the proportions of both levels of the outcome variable, `transported`, in the dataset?
+
+```{r proportions of transported}
+titanic_cleaned %>% 
+  group_by(Transported) %>% 
+  summarise(prop = n()/nrow(.))
+```
+
+The proportions are relatively even.
+
+### Exercise 4
+
+Make proportion stacked bar charts of each of the following. Describe what patterns, if any, you observe.
+
+1.  `home_planet` and `transported`
+
+2.  `cryo_sleep` and `transported`
+
+3.  `destination` and `transported`
+
+4.  `vip` and `transported`
+
+```{r stacked bar charts}
+titanic_cleaned <- titanic_cleaned %>% mutate(Transported = as.factor(Transported))
+
+ggplot(titanic_cleaned, aes(y = HomePlanet, fill = Transported)) +
+  geom_bar(position = "fill") 
+ggplot(titanic_cleaned, aes(y = CryoSleep, fill = Transported)) +
+  geom_bar(position = "fill") 
+ggplot(titanic_cleaned, aes(y = Destination, fill = Transported)) +
+  geom_bar(position = "fill") 
+ggplot(titanic_cleaned, aes(y = VIP, fill = Transported)) +
+  geom_bar(position = "fill") 
+```
+
+People from Europa are most likely to be transported; Earth is most unlikely.
+
+People in cryo-sleep are more likely to be transported than those who are not.
+
+People going to 55 Cancri e are more likely to be transported than people going to TRAPPIST-1e
+
+People are are not VIPs are more likely to be transported than those who are
+
+### Exercise 5
+
+Using box plots, density curves, histograms, dot plots, or violin plots, compare the distributions of the following and describe what patterns you observe, if any.
+
+1.  `age` across levels of `transported`
+
+2.  `room_service` across levels of `transported`
+
+3.  `spa` across levels of `transported`
+
+4.  `vr_deck` across levels of `transported`
+
+```{r data visualization}
+ggplot(titanic_cleaned, aes(x = Age, color = Transported)) +
+  geom_boxplot() # no difference in median
+
+ggplot(titanic_cleaned, aes(x = RoomService, color = Transported)) +
+  geom_boxplot() # difficult to tell bc the distirbution is positively skewed (we can see that people who spend more money in room service are less likely to be transported)
+
+ggplot(titanic_cleaned, aes(x = Spa, color = Transported)) +
+  geom_boxplot()
+
+ggplot(titanic_cleaned, aes(x = VRDeck, color = Transported)) +
+  geom_boxplot()
+```
+
+### Exercise 6
+
+Make a correlogram of the continuous variables in the dataset. What do you observe?
+
+```{r corrplot}
+titanic_cleaned %>% 
+  select_if(is.numeric) %>% 
+  cor() %>% 
+  corrplot(method = "number", type = "lower")
+```
+
+None of the numeric features are negatively correlated. Most have a correlation either near 0 or slightly positive. The largest positive correlation is about 0.22. The expenditures are generally slightly positively correlated with each other.
+
+### Exercise 7
+
+Use binning to divide the feature `age` into six groups: ages 0-12, 13-17, 18-25, 26-30, 31-50, and 51+.
+
+```{r binning ages}
+titanic_cleaned <- titanic_cleaned %>% 
+  mutate(Age = case_when(
+    Age <= 12 ~ "0-12",
+    Age <= 17 ~ "13-17",
+    Age <= 25 ~ "18-25",
+    Age <= 30 ~ "26-30",
+    Age <= 50 ~ "31-50",
+    Age >= 51 ~ "51+"
+  ))
+```
+
+### Exercise 8
+
+For the expenditure variables, do the following:
+
+-   Create a new feature that consists of the total expenditure across all five amenities;
+
+-   Create a binary feature to flag passengers who did not spend anything (a total expenditure of 0);
+
+-   Log-transform the total expenditure to reduce skew.
+
+```{r create features}
+# variable for sum of all expenditures
+titanic_cleaned <- titanic_cleaned %>% 
+  rowwise() %>% 
+  mutate(expenditure_sum = sum(c(RoomService, FoodCourt, Spa, VRDeck)))
+
+# variable for passengers who have exp_sum = 0
+titanic_cleaned <- titanic_cleaned %>% 
+  mutate(spent_anything = case_when(
+    expenditure_sum == 0 ~ 0,
+    expenditure_sum > 0 ~ 1
+  ))
+
+# log transform the total expenditure
+titanic_cleaned <- titanic_cleaned %>% 
+  mutate(log_expenditure_sum = log(expenditure_sum + 1))
+```
+
+### Exercise 9
+
+Using the `passenger_id` column, create a new binary-coded feature that represents whether a passenger was traveling alone or not. Make a proportion stacked bar chart of this feature and `transported`. What do you observe?
+
+```{r feature engineering binary variable}
+# notice that using group = '1' vs `1` matters. the first quote will assign all columns to the string 1 while the second quote will assign the existing column name
+titanic_cleaned <- cbind(str_split(titanic_cleaned$PassengerId, pattern = '_', n = 2, simplify = T), titanic_cleaned) %>% 
+  tibble() %>% 
+  mutate(group = `1`, passenger_number = `2`) %>% 
+  select(-c(`1`, `2`)) %>% 
+  group_by(group) %>% 
+  reframe(group_size = n(), across(everything())) %>% 
+  mutate(solo = case_when(
+    group_size == 1 ~ 1,
+    group_size > 1 ~ 0)) %>% 
+  select(solo, everything())
+```
+
+```{r stacked bar chart of solo travelers}
+titanic_cleaned %>% 
+  mutate(solo = as.factor(solo)) %>% 
+  ggplot(aes(x = solo, fill = Transported)) + 
+  geom_bar(position = "fill")
+```
+
+Passengers traveling solo were less likely to be transported.
+
+### Exercise 10
+
+Using the `cabin` variable, extract:
+
+1.  Cabin deck (A, B, C, D, E, F, G, or T);
+2.  Cabin number (0 to 2000);
+3.  Cabin side (P or S).
+
+Then do the following:
+
+-   Drop any observations with a cabin deck of T;
+
+-   Bin cabin number into groups of 300 (for example, 0 - 300, 301 - 600, 601- 900, etc.).
+
+```{r cabin feature}
+titanic_cleaned <- cbind(str_split(titanic_cleaned$Cabin, pattern = '/', n = 3, simplify = T), titanic_cleaned) %>% 
+  mutate(cabin_deck = `1`,
+         cabin_number = as.numeric(`2`), # note the as.numeric()
+         cabin_side = `3`) %>% 
+  select(-c(`1`, `2`, `3`)) %>% 
+  filter(cabin_deck != 'T') %>% 
+  mutate(cabin_number = case_when(
+    cabin_number <= 300 ~ '0-300',
+    cabin_number <= 600 ~ '301-600',
+    cabin_number <= 900 ~ '601-900',
+    cabin_number <= 1200 ~ '901-1200',
+    cabin_number <= 1500 ~ '1201-1500',
+    cabin_number <= 1800 ~ '1501-1800',
+    cabin_number > 1800 ~ '1800+',
+  ))
+```
+
+```{r distribution of cabin number}
+titanic_cleaned %>% 
+  ggplot(aes(y = fct_infreq(cabin_number), fill = Transported)) +
+  geom_bar(position = 'fill')
+```
+
+### Exercise 11
+
+Create a new data frame (or tibble) that retains the following features:
+
+1.  `home_planet`
+2.  cabin deck
+3.  cabin number (binned)
+4.  cabin side
+5.  `age` (binned)
+6.  total expenditures (log-transformed)
+7.  `cryo_sleep`
+8.  `destination`
+9.  whether the passenger was traveling alone (call this `solo`)
+
+To those features, do the following:
+
+-   One-hot encode all categorical features
+
+-   Center and scale all continuous features
+
+```{r new features}
+# we clean names here (if did not clean prior)
+titanic_cleaned <- titanic_cleaned %>% clean_names()
+
+titanic_df <- titanic_cleaned %>% 
+  select(home_planet, cabin_deck, cabin_number, cabin_side, age, log_expenditure_sum, cryo_sleep, destination, solo, transported) %>% 
+  mutate(cryo_sleep = as.factor(cryo_sleep),
+         solo = as.factor(solo),
+         transported = as.factor(transported))
+
+dim(titanic_df)
+```
+
+```{r one hot encoding}
+titanic_recipe <- recipe(transported ~ ., data = titanic_df) %>% 
+  step_normalize(log_expenditure_sum) %>% 
+  step_dummy(all_nominal_predictors(), one_hot = T)
+
+titanic_df <- prep(titanic_recipe) %>% 
+  bake(titanic_df)
+
+titanic_df %>% head(n=50)
+```
+
+### Exercise 12
+
+Write up your analyses thus far in one or two paragraphs. Describe what you have learned about the passengers on the Spaceship Titanic. Describe the relationships you observed between variables. Which features do you think may be the best predictors of transported status? Why or why not?
+
+### Exercises for 234 Students
+
+#### Exercise 13
+
+Split the dataset into training and testing. Use random sampling. Make sure that $80\%$ of observations are in the training set and the remaining $20\%$ in the testing set.
+
+```{r split data}
+titanic_split <- initial_split(titanic_df, prop = .8, strata = transported)
+titanic_test <- testing(titanic_split)
+titanic_train <- training(titanic_split)
+```
+
+#### Exercise 14
+
+Using *k*-fold cross-validation with *k* of 5, tune two models:
+
+1.  A random forest;
+2.  An elastic net (*regularization technique that combines ride and lasso*).
+
+We do 5-fold cross validation on the training data. This means that we split the training dataset into **5 equal parts**. For each fold, one part will be used for *validation*, while the other 4 parts will be used for training. We stratify by the response (transported) to ensure that each fold has an even distribution of the response distribution (which is helpful in imbalanced data).
+
+We define a random forest model (for classification).
+
+-   mtry = \# of variables to consider at each split in the tree
+
+-   trees = \# of trees in the forest
+
+-   min_n = minimum \# of observations required to make a split in a tree (to prevent overfitting)
+
+    We tune all of these hyperparameters in our model to select the best mixture.
+
+We set up a regular grid of hyperparameters to find the best combination (in tuning our best model).
+
+-   We test mtry (# of variables per split) between range 1-6 predictors (our of the 34 different columns/predictors there exist)
+
+-   We use trees() as a placeholder to define a range of values for the \# of trees since tune() will automatically handle
+
+-   We also use min_n() as a placeholder to define a range of values for hte min \# of observations per split since tune() will automatically handle
+
+-   level=10 specifies that 10 different values for each of the hyperparameters (mtry, trees, min_n) will be tested in the grid search
+
+We define an elastic net model (for classification):
+
+-   penalty: controls the strength of the regularization (higher value increases the regularization effect which can reduce overfitting by shrinking the coefficients of hte model)
+
+-   mixture: controls the balance between Ridge (L2) and Lasso (L1)
+
+    -   mixture = 0: Ridge Regression
+
+    -   mixture = 1: Lasso Regression
+
+An elastic net is useful when there are many features in the dataset (and some of them are highly correlated)
+
+```{r k fold cross validation}
+# create recipe: preprocessing obect to define steps for preparing data before training the model (e.g. feature engineering, normalization, missing data, etc)
+titanic_recipe <- recipe(transported ~ ., data = titanic_train)
+# create a cross-validation resampling strategy (ie split the data into 'v' many subsets called "folds"); train the model on v-1 folds and validate on the v'th fold (this is repeated v times and the model performance is averaged across all folds)
+titanic_folds <- vfold_cv(titanic_train, v = 5, strata = transported)
+
+# RANDOM FOREST model specification: tune mtry
+rf_mod <- rand_forest(mode = "classification",
+                      mtry = tune(),
+                      trees = tune(),
+                      min_n = tune()) %>% 
+  set_engine("ranger", importance = "impurity") # impurity meausre to calculate feature importance 
+
+# create workflow: to combine a model specification with a recipe 
+# to streamline the modeling process by linking together all the components 
+rf_wkflow <- workflow() %>% 
+  add_model(rf_mod) %>% 
+  add_recipe(titanic_recipe) # this rf_wkflow can now be used for fitting + evaluating the model 
+
+# create a regular grid of hyperparmeters to search over (a grid search is a method of exploring a range of values for the model's hyperparameters to find the best combination)
+rf_grid <- grid_regular(mtry(range = c(1, 6)), trees(), min_n(), levels = 10)
+
+
+# ELASTIC NET: tune penalty and mixture 
+en_mod <- logistic_reg(mode = "classification",
+                       penalty = tune(), 
+                       mixture = tune()) %>% 
+  set_engine("glmnet")
+
+en_wkflow <- workflow() %>% 
+  add_model(en_mod) %>% 
+  add_recipe(titanic_recipe)
+
+en_grid <- grid_regular(penalty(), mixture(), levels = 10)
+```
+
+```{r random forest hyperparameter tuning using grid search}
+# tune_grid(): performs a grid search over the set of hyperparameters; to train and evaluate models for each combination of hyperparameters defined in rf_grid
+rf_res <- tune_grid(rf_wkflow, rf_grid, resamples = titanic_folds)
+
+# rf_res = tuning result (contains the performance metrics for each hyperparameter combination)
+save(rf_res, file = '~/Desktop/Projects/PSTAT 134/Homework 3/rf_res.rda')
+```
+
+tune_grid() iterates over each combination of values in our grid and evaluates how well the model performs on each fold of the cross-validation. For each combination, it performs the 5-fold cross validation.
+
+For each fold, it trains the model on the training data and evaluates it on the validation data; then averages the performance metrics across the 5 folds.
+
+The default metric for classification metrics is "accuracy".
+
+-   collect_metrics(): to show the performance metrics for all hyperparameter combinations
+
+-   collect_best(): to show the best-performing hyperparameter combination, according to tuning results
+
+-   autoplot(): to plot the performance across the different hyperparameter values
+
+```{r random forest metrics to determine best model}
+collect_metrics(rf_res) %>% 
+  filter(.metric == 'roc_auc') %>% 
+  arrange(desc(mean))
+```
+
+```{r elastic net hyperparameter tuning using grid search}
+en_res <- tune_grid(en_wkflow, en_grid, resamples = titanic_folds)
+
+save(en_res, file = "~/Desktop/Projects/PSTAT 134/Homework 3/en_res.rda")
+```
+
+```{r elastic net metrics}
+collect_metrics(en_res) %>% 
+  filter(.metric == 'roc_auc') %>% 
+  arrange(desc(mean))
+```
+
+#### Exercise 15
+
+Select your best **random forest** model and use it to predict your testing set. Present the following:
+
+-   Testing accuracy;
+
+-   Testing ROC curve (and area under the ROC curve);
+
+-   Confusion matrix;
+
+-   Variable importance plot.
+
+```{r select best random forest}
+# select the best model
+best_rf <- select_best(rf_res) # notice, this is first row in metrics list (w/ highest average)
+
+# fit the best model with a finalized workflow (with optimaal hyperparameters)
+best_rf_results <- finalize_workflow(rf_wkflow, best_rf) %>% 
+  fit(titanic_train) # train the model on the entire training dataset 
+save(best_rf_results, file = '~/Desktop/Projects/PSTAT 134/Homework 3/best_rf_results.rda')
+```
+
+```{r best random forest fit}
+# augment() applies the best rf model to the test data and adds the model's [predictions, residuals, diagostics] == [.pred_class, .pred_prob, .resid, .row] to the dataset
+best_rf_results_data <- best_rf_results %>% augment(titanic_test)
+
+# calculates the accuracy of model predictions (.pred_class = predicted class labels)
+accuracy(best_rf_results_data, truth = transported, estimate = .pred_class)
+
+# .pred_FALSE: the predicted prob of the negative class (so this ROC curve will show the trade-off between the True Positive Rate (sensitivity) and False Positive Rate (1-specificity))
+best_rf_results_data %>% 
+  roc_curve(truth = transported, .pred_FALSE) %>% 
+  autoplot()
+
+best_rf_results_data %>% 
+  roc_auc(truth = transported, .pred_FALSE) # AUC = 0.7-0.8 is good
+```
+
+```{r confusion matrix of random forest}
+# displays false positive (157), negatives (247)
+best_rf_results_data %>% 
+  conf_mat(truth = transported, .pred_class) %>% 
+  autoplot(type = 'heatmap')
+# True Neg, False Pos
+# False Neg, True Pos
+```
+
+```{r variable importance plot}
+# VIP: to show the importance of each predictor/feature in the model 
+best_rf_results %>% vip()
+```
+
+We will now repeat the same process for the elastic net model.
+
+```{r fit the elastic net model}
+# select the best model
+best_en <- select_best(en_res) # notice, this is first row in metrics list (w/ highest average)
+
+# fit the best model
+best_en_results <- finalize_workflow(en_wkflow, best_en) %>% 
+  fit(titanic_train)
+save(best_en_results, file = '~/Desktop/Projects/PSTAT 134/Homework 3/best_en_results.rda')
+
+best_en_results_data <- best_en_results %>% augment(titanic_test) # add .pred_class, .pred_FALSE, .pred_TRUE
+
+accuracy(best_en_results_data, truth = transported, estimate = .pred_class)
+
+best_en_results_data %>% 
+  roc_curve(truth = transported, .pred_FALSE) %>% 
+  autoplot()
+
+best_en_results_data %>% 
+  roc_auc(truth = transported, .pred_FALSE)
+
+best_en_results_data %>% 
+  conf_mat(truth = transported, .pred_class) %>% 
+  autoplot(type = 'heatmap')
+
+best_en_results %>% vip()
+```
+
+The best fit random forest model that was tuned has accuracy of 0.762 and ROC area under the curve of 0.843. It predicted 686 true negatives and 609 true positives.
+
+The best fit elastic net model that was tuned has accuracy of 0.764 and ROC area under the curve of 0.831. It predicted 675 true negatives and 624 true positives.
+
+#### Exercise 16
+
+Write up your conclusions in one to two paragraphs. Answer the following: How did your models do? Are you happy with their performance? Is there another model (besides these two) that you would be interested in trying? Which features ended up being the most important in terms of predicting whether or not a passenger would be transported?

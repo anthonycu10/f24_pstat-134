@@ -1,0 +1,492 @@
+---
+title: "Homework 3"
+author: "PSTAT 134/234"
+format: pdf
+  # html:
+  #   toc: true
+  #   toc-location: left
+  #   toc-depth: 4
+  #   embed-resources: true
+  #   theme: simplex
+editor: visual
+---
+
+## Homework 3
+
+![Star Trek ships.](star_trek.jpeg)
+
+For this homework assignment, we'll be working with a dataset called [Spaceship Titanic](https://www.kaggle.com/competitions/spaceship-titanic/overview). It is a simulated dataset used for a popular Kaggle competition, intended to be similar to the very famous Titanic dataset. The premise of the Spaceship Titanic data is that it is currently the year 2912. You have received a transmission from four lightyears away, sent by the Spaceship Titanic, which was launched a month ago.
+
+The Titanic set out with about 13,000 passengers who were emigrating from our solar system to three newly habitable exoplanets. However, it collided with a spacetime anomaly hidden in a dust cloud, and as a result, although the ship remained intact, half of the passengers on board were transported to an alternate dimension. Your challenge is to predict which passengers were transported, using records recovered from the spaceship's damaged computer system.
+
+The dataset is provided in `/data`, along with a codebook describing each variable. You should read the dataset into your preferred coding language (R or Python) and familiarize yourself with each variable.
+
+We will use this dataset for the purposes of practicing our data visualization and feature engineering skills.
+
+```{python}
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import re
+from sklearn.preprocessing import StandardScaler
+
+titanic = pd.read_csv('~/Desktop/Projects/PSTAT 134/Homework 3/data/spaceship_titanic.csv')
+```
+
+### Exercise 1
+
+Which variables have missing values? What percentage of these variables is missing? What percentage of the overall dataset is missing?
+
+```{python}
+# titanic.isnull().sum(), titanic.isna().sum() returns the same 
+
+for col in titanic.columns.tolist():          
+  print('{} column missing values: {}'.format(col, titanic[col].isnull().sum()))
+```
+
+> All variables (except for PassengerID and Transported) have missing values. I searched for all null (and NA) values in the columns and calculated the total of these entries. I print the missing percentage of each of the variables:
+
+```{python}
+for w in titanic.columns:
+  missing_prop = titanic[w].isnull().sum() / len(titanic)
+  print(f"{w}: {missing_prop:.2%}")
+
+```
+
+```{python}
+((titanic.isnull().sum()).sum() / titanic.size)
+```
+
+> In total of the entire dataframe, about 1.91% of the total data is missing.
+
+### Exercise 2
+
+Use mode imputation to fill in any missing values of `home_planet`, `cryo_sleep`, `destination`, and `vip`. Drop any observations with a missing value of `cabin` (there are too many possible values).
+
+Use median imputation to fill in any missing values of `age`. Rather than imputing with the overall mean of `age`, impute with the median age of the corresponding `vip` group. (For example, if someone who is a VIP is missing their age, replace their missing age value with the median age of all passengers who are **also** VIPs).
+
+For passengers missing any of the expenditure variables (`room_service`, `food_court`, `shopping_mall`, `spa`, or `vr_deck`), handle them in this way:
+
+-   If all their observed expenditure values are $0$, **or** if they are in cryo-sleep, replace their missing value(s) with $0$.
+
+-   For the remaining missing expenditure values, use mean imputation.
+
+```{python}
+titanic_cleaned = titanic.copy()
+
+# mode imputation
+for i in ['HomePlanet', 'CryoSleep', 'Destination', 'VIP']:
+  titanic_cleaned[i] = titanic_cleaned[i].fillna(titanic_cleaned[i].mode()[0])
+
+# drop observations that are missing values in cabin
+titanic_cleaned = titanic_cleaned.dropna(subset=['Cabin'])
+
+# median imputation 
+age_medians = titanic_cleaned.groupby(['VIP'])['Age'].transform(lambda x: x.fillna(x.median()))
+
+titanic_cleaned['Age'] = titanic_cleaned['Age'].fillna(age_medians)
+
+# alternate approach (not vectorized function)
+# median_VIP = titanic_cleaned[titanic_cleaned['VIP'] == True]['Age'].median()
+# median_no_VIP = titanic_cleaned[titanic_cleaned['VIP'] == False]['Age'].median()
+# 
+# titanic_cleaned.loc[(titanic_cleaned['VIP'] == True) & (titanic_cleaned['Age'].isnull()), 'Age'] = median_VIP
+# titanic_cleaned.loc[(titanic_cleaned['VIP'] == False) & (titanic_cleaned['Age'].isnull()), 'Age'] = median_no_VIP
+
+# missing by expenditure values
+
+# to check if any of these observations are missing or if any of these observations equal 0 OR if the crysleep is true
+expenditures = ['RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck']
+rows_to_0 = np.all((titanic_cleaned[expenditures] == 0) | titanic_cleaned[expenditures].isnull(), axis=1) | (titanic_cleaned['CryoSleep'] == True)
+
+# impute the entires with 0s
+titanic_cleaned.loc[rows_to_0, expenditures] = 0
+
+# for remaining mean imputation (not for condition)
+for i in ['RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck']:
+  titanic_cleaned[i] = titanic_cleaned[i].fillna(titanic_cleaned[i].mean())
+
+# we check that we have successfully filled in missing values 
+titanic_cleaned.isnull().sum()
+```
+
+### Exercise 3
+
+What are the proportions of both levels of the outcome variable, `transported`, in the dataset?
+
+```{python}
+transport_levels = titanic_cleaned['Transported'].value_counts()
+
+transport_levels / transport_levels.sum()
+```
+
+> 50.37% of the variables are transported, while 49.63% of the variables are not transported.
+
+### Exercise 4
+
+Make proportion stacked bar charts of each of the following. Describe what patterns, if any, you observe.
+
+1.  `home_planet` and `transported`
+
+2.  `cryo_sleep` and `transported`
+
+3.  `destination` and `transported`
+
+4.  `vip` and `transported`
+
+```{python}
+# proportion stacked bar charts of transportation status filled by classes
+for i in ['HomePlanet', 'CryoSleep', 'Destination', 'VIP']:
+  # Calculate counts of each class by home planet 
+  count_data = titanic_cleaned.groupby([i, 'Transported']).size().reset_index(name='count')
+  
+  # Calculate the total counts for each home planet 
+  total_counts = count_data.groupby(i)['count'].transform('sum')
+  
+  # Calculate the proportion
+  count_data['proportion'] = count_data['count'] / total_counts
+  
+  # Create a pivot table for better plotting
+  pivot_data = count_data.pivot(index=i, columns='Transported', values='proportion').fillna(0)
+  
+  # Plotting
+  plt.figure(figsize=(10, 6))
+  
+  # Stack the bars
+  pivot_data.plot(kind='bar', stacked=True, ax=plt.gca(), alpha=0.8)
+  
+  # Set y-axis limits
+  plt.ylim(0, 1)
+  plt.title(f"{i} by Transportation Status", loc='center')
+  plt.xlabel(i)
+  plt.xticks(np.arange(len(titanic_cleaned[i].unique())), labels=titanic_cleaned[i].unique(), rotation=0)
+  plt.ylabel("Proportion")
+  
+  # Customize the legend
+  plt.legend(title="Transportation Status", bbox_to_anchor=(1.05, 1), loc='upper left')
+  plt.tight_layout()
+  
+  # Show the plot
+  plt.show()
+  plt.close()
+```
+
+| Out of all of the home planets, Earth transports the most observations- transporting over 60% of its passengers. In addition, about 80% of the passengers in CryoSleep are transported. Of all the destinations, TRAPPIST-1e has the highest rate of successful transportations- roughly 60% of its observations; on the other hand 55 Cancri e has the lowest rate of successful transportation- about 50% of its observations. VIP status tends to cause less successful transportation, as only 40% of VIP passengers are transported. On the other hand, non-VIP members are evenly transported.
+
+```{python}
+# proportion stacked bar charts of classes filled by transportation status
+for i in ['HomePlanet', 'CryoSleep', 'Destination', 'VIP']:
+  # Calculate counts of each class by home planet 
+  count_data = titanic_cleaned.groupby(['Transported', i]).size().reset_index(name='count')
+  
+  # Calculate the total counts for each home planet 
+  total_counts = count_data.groupby('Transported')['count'].transform('sum')
+  
+  # Calculate the proportion
+  count_data['proportion'] = count_data['count'] / total_counts
+  
+  # Create a pivot table for better plotting
+  pivot_data = count_data.pivot(index='Transported', columns=i, values='proportion').fillna(0)
+  
+  # Plotting
+  plt.figure(figsize=(10, 6))
+  
+  # Stack the bars
+  pivot_data.plot(kind='bar', stacked=True, ax=plt.gca(), alpha=0.8)
+  
+  # Set y-axis limits
+  plt.ylim(0, 1)
+  plt.title(f"Transportation Status by {i}", loc = 'center')
+  plt.xlabel('Transportation Status')
+  plt.xticks(ticks=[0, 1], labels=['Not Transported', 'Transported'], rotation=0)
+  plt.ylabel("Proportion")
+  
+  # Customize the legend
+  plt.legend(title=i, bbox_to_anchor=(1.05, 1), loc='upper left')
+  plt.tight_layout()
+  
+  # Show the plot
+  plt.show()
+  plt.close()
+```
+
+| These plots emphasize the same interpretations- but with different lenses. Earth passengers consume most of the proportions of transported and non-transported observations. Most of the transported passengers are in CryoSleep while most of the non-transported passengers are *not* in CryoSleep. The destination for both transported and non-transported passengers is TRAPPIST-1e. The VIP distribution for transported and non-transported passengers is very similar- indicating there may not be a correlation between the variables.
+
+### Exercise 5
+
+Using box plots, density curves, histograms, dot plots, or violin plots, compare the distributions of the following and describe what patterns you observe, if any.
+
+1.  `age` across levels of `transported`
+
+2.  `room_service` across levels of `transported`
+
+3.  `spa` across levels of `transported`
+
+4.  `vr_deck` across levels of `transported`
+
+```{python}
+plt.figure(figsize=(8, 6))
+sns.kdeplot(data=titanic_cleaned, x='Age', hue='Transported', linewidth=0.75)
+
+# Add labels and title
+plt.title("Age across Transportation Status")
+plt.xlabel("Age")
+plt.ylabel("Density")
+
+# Show the plot
+plt.show()
+plt.close()
+```
+
+```{python}
+# considerations: log normalize? 
+for i in ['Spa', 'VRDeck', 'RoomService']:
+  plt.figure(figsize=(8, 6))
+  sns.histplot(data=titanic_cleaned, x=i, hue='Transported', bins=10, edgecolor='black', stat='count', multiple='stack')
+  
+  # Add labels and title
+  plt.yscale('log')
+  plt.title(f"Amount spent in {i} by Transportation status")
+  plt.xlabel(i)
+  plt.ylabel("Log Scaled Count")
+  
+  # Show the plot
+  plt.show()
+  plt.close()
+```
+
+### Exercise 6
+
+Make a correlogram of the continuous variables in the dataset. What do you observe?
+
+```{r}
+library(reticulate)
+library(tidyverse)
+library(corrplot)
+
+py$titanic_cleaned %>% 
+  select_if(is.numeric) %>% 
+  cor(use = "pairwise.complete.obs") %>% 
+  corrplot(type = "lower", method = "number")
+```
+
+> The correlogram indicates weak positive correlations amongst most of the continuous variables. There exists the stronget positive correlation between FoodCourt with Spa and Foodcourt with VRDeck. This indicates that these variables behave very similarly. Age has a weak positive correlation with each of the variables \[RoomService, FoodCourt, ShoppingMall, Spa, and VRDeck\]
+
+### Exercise 7
+
+Use binning to divide the feature `age` into six groups: ages 0-12, 13-17, 18-25, 26-30, 31-50, and 51+.
+
+```{python}
+def categorize_age(age):
+  if age <= 12:
+    return "0-12"
+  elif 13 <= age <= 17:
+    return "13-17"
+  elif 18 <= age <= 25:
+    return "18-25"
+  elif 26 <= age <= 30:
+    return "26-30"
+  elif 31 <- age <= 50:
+    return "31-50"
+  else:
+    return "51+"
+titanic_cleaned['Age_Group'] = titanic_cleaned['Age'].apply(categorize_age)
+```
+
+### Exercise 8
+
+For the expenditure variables, do the following:
+
+-   Create a new feature that consists of the total expenditure across all five amenities;
+
+-   Create a binary feature to flag passengers who did not spend anything (a total expenditure of 0);
+
+-   Log-transform the total expenditure to reduce skew.
+
+```{python}
+titanic_cleaned['Sum_Expenditures'] = titanic_cleaned[expenditures].sum(axis = 1) # axis = 1 to sum by row 
+
+titanic_cleaned['is_Spent_Expenditures'] = titanic_cleaned['Sum_Expenditures'] != 0
+
+# log transform with log(1+x) to handle 0s
+titanic_cleaned['Sum_Expenditures_log'] = np.log1p(titanic_cleaned['Sum_Expenditures'])
+```
+
+### Exercise 9
+
+Using the `passenger_id` column, create a new binary-coded feature that represents whether a passenger was traveling alone or not. Make a proportion stacked bar chart of this feature and `transported`. What do you observe?
+
+```{python}
+groups = titanic_cleaned['PassengerId'].str[:4].value_counts().to_dict()
+
+def group_passengers(passenger):
+  if groups[passenger[:4]] > 1:
+    return False
+  else:
+    return True
+  
+titanic_cleaned['is_Passenger_Alone'] = titanic_cleaned['PassengerId'].apply(group_passengers)
+  
+# alternate (old code)
+# group = {}
+# for i in titanic_cleaned['PassengerId']:
+#   if i[:4] in group:
+#     group[i[:4]] += 1
+#   else:
+#     group[i[:4]] = 1
+```
+
+```{python}
+titanic_cleaned['Transported'] = titanic_cleaned['Transported'].astype('category')
+
+plt.figure(figsize=(8, 6))
+sns.histplot(
+    data=titanic_cleaned, 
+    x='Transported',
+    hue='is_Passenger_Alone', 
+    multiple='fill', 
+    discrete = True,
+    palette="Set2"
+)
+plt.xlabel("Deck")
+plt.ylabel("Proportion")
+plt.title("Proportion of Passengers by Deck and Pclass")
+plt.show()
+plt.close()
+```
+
+### Exercise 10
+
+Using the `cabin` variable, extract:
+
+1.  Cabin deck (A, B, C, D, E, F, G, or T);
+2.  Cabin number (0 to 2000);
+3.  Cabin side (P or S).
+
+Then do the following:
+
+-   Drop any observations with a cabin deck of T;
+
+-   Bin cabin number into groups of 300 (for example, 0 - 300, 301 - 600, 601- 900, etc.).
+
+```{python}
+# cabin deck is the first letter of each cabin
+titanic_cleaned['Deck'] = titanic_cleaned['Cabin'].str[:1]
+
+# cabin number is the numerical part of each cabin 
+# titanic_cleaned['CabinNumber'] = titanic_cleaned['Cabin'].str.findall(r'\d+\.?\d*')
+
+titanic_cleaned['CabinNumber'] = titanic_cleaned['Cabin'].apply(lambda x: int(''.join(filter(str.isdigit, x))))
+
+# cabin side is the last letter of each cabin
+titanic_cleaned['CabinSide'] = titanic_cleaned['Cabin'].str[-1]
+```
+
+```{python}
+titanic_cleaned['Deck']
+
+# drop observations with a cabin deck of T
+titanic_cleaned = titanic_cleaned[titanic_cleaned['Deck'] != 'T']
+
+# bin cabin numbers into groups of 300
+bins = range(titanic_cleaned['CabinNumber'].min(), titanic_cleaned['CabinNumber'].max() + 301, 300)
+
+labels = []
+for i in bins[:-1]:
+  if i == 0:
+    labels.append(f'{i}-{i+300}')
+  else:
+    labels.append(f'{i+1}-{i+300}')
+
+# use pd.cut() to categorize into bins
+titanic_cleaned['CabinBin'] = pd.cut(titanic_cleaned['CabinNumber'], bins=bins, labels=labels, right=True, include_lowest = True)
+```
+
+### Exercise 11
+
+Create a new data frame (or tibble) that retains the following features:
+
+1.  `home_planet`
+2.  cabin deck
+3.  cabin number (binned)
+4.  cabin side
+5.  `age` (binned)
+6.  total expenditures (log-transformed)
+7.  `cryo_sleep`
+8.  `destination`
+9.  whether the passenger was traveling alone (call this `solo`)
+10. Transported
+
+To those features, do the following:
+
+-   One-hot encode all categorical features
+
+-   Center and scale all continuous features
+
+```{python}
+titanic_new = pd.DataFrame({'home_planet': titanic_cleaned['HomePlanet'], 'cabin_deck': titanic_cleaned['Deck'], 'cabin_number_bin': titanic_cleaned['CabinBin'], 'age_bin': titanic_cleaned['Age_Group'], 'total_expenditures_log': titanic_cleaned['Sum_Expenditures_log'], 'cryo_sleep': titanic_cleaned['CryoSleep'], 'destination': titanic_cleaned['Destination'], 'solo': titanic_cleaned['is_Passenger_Alone'], 'transported': titanic_cleaned['Transported']})
+
+# alternate
+# selected_columns = [
+#     'HomePlanet', 'Deck', 'CabinBin', 'Age_Group', 'Sum_Expenditures_log', 
+#     'CryoSleep', 'Destination', 'is_Passenger_Alone', 'Transported'
+# ]
+# 
+# df = titanic_cleaned[selected_columns].copy()
+# 
+# # Rename the columns
+# df.columns = [
+#     'home_planet', 'cabin_deck', 'cabin_number_bin', 'age_bin', 
+#     'total_expenditures_log', 'cryo_sleep', 'destination', 'solo', 'transported'
+# ]
+```
+
+```{python}
+titanic_new_hot = pd.get_dummies(titanic_new.drop(columns = ['total_expenditures_log', 'transported']), drop_first=False)
+
+# Initialize the scaler
+scaler = StandardScaler()
+
+# Fit and transform the data (center and scale)
+titanic_new_hot['total_expenditures_log_scaled'] = scaler.fit_transform(titanic_new[['total_expenditures_log']])
+
+titanic_new_hot['transported'] = titanic_new['transported']
+
+titanic_new_hot
+```
+
+### Exercise 12
+
+Write up your analyses thus far in one or two paragraphs. Describe what you have learned about the passengers on the Spaceship Titanic. Describe the relationships you observed between variables. Which features do you think may be the best predictors of transported status? Why or why not?
+
+| 
+
+### Exercises for 234 Students
+
+#### Exercise 13
+
+Split the dataset into training and testing. Use random sampling. Make sure that $80\%$ of observations are in the training set and the remaining $20\%$ in the testing set.
+
+#### Exercise 14
+
+Using *k*-fold cross-validation with *k* of 5, tune two models:
+
+1.  A random forest;
+2.  An elastic net.
+
+#### Exercise 15
+
+Select your best **random forest** model and use it to predict your testing set. Present the following:
+
+-   Testing accuracy;
+
+-   Testing ROC curve (and area under the ROC curve);
+
+-   Confusion matrix;
+
+-   Variable importance plot.
+
+#### Exercise 16
+
+Write up your conclusions in one to two paragraphs. Answer the following: How did your models do? Are you happy with their performance? Is there another model (besides these two) that you would be interested in trying? Which features ended up being the most important in terms of predicting whether or not a passenger would be transported?
