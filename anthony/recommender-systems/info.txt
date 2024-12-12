@@ -1,0 +1,5 @@
+This homework assignment was done in Python:
+
+- building a content-based recommendation system for movies using NLP
+
+- building an image classification model on photos of cats, dogs, and snakes 
