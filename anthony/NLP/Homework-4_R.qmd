@@ -1,0 +1,399 @@
+---
+title: "Homework 4"
+author: "PSTAT 134/234"
+format:
+  html:
+    toc: true
+    toc-location: left
+    toc-depth: 4
+    embed-resources: true
+    theme: simplex
+editor: visual
+---
+
+## Homework 4
+
+**Note: If this is one of your two late homework submissions, please indicate below; also indicate whether it is your first or second late submission.**
+
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
+
+This homework assignment has you practice working with some text data, doing some natural language processing. I strongly advise using Lab 7 for assistance.
+
+You also may need to use other functions. I encourage you to make use of our textbook(s) and use the Internet to help you solve these problems. You can also work together with your classmates. If you do work together, you should provide the names of those classmates below.
+
+[Names of Collaborators (if any): William Mahnke]{.underline}
+
+### Natural Language Processing
+
+We'll work with the data in `data/spotify-review-data.csv`. This CSV file contains a total of 51,473 rows, each representing a unique user review for the Spotify application. The dataset has two columns:
+
+-   Review: This column contains the text of user reviews, reflecting their experiences, opinions, and feedback on the Spotify app.
+
+-   Sentiment label: This column categorizes each review as either "POSITIVE" or "NEGATIVE" based on its sentiment.
+
+The data comes from this source at Kaggle: <https://www.kaggle.com/datasets/alexandrakim2201/spotify-dataset>
+
+```{r library, warning = F}
+# data manipulation
+library(tidyverse)
+library(tidymodels)
+library(reshape2)
+library(data.table)
+
+# text mining 
+library(tidytext)
+library(stringi)
+
+# data visualization
+library(ggplot2)
+library(wordcloud)
+library(kableExtra)
+library(igraph)
+library(ggraph)
+
+# data modeling
+library(tidymodels)
+library(tm)
+
+spotify <- read_csv('~/Desktop/Projects/PSTAT 134/Homework 4/data/spotify-review-data.csv')
+theme_set(theme_bw())  # preset the bw theme
+```
+
+#### Exercise 1
+
+Read the data into R (or Python, whichever you prefer).
+
+Take a look at the distribution of `label`. Are there relatively even numbers of negative and positive reviews in the data set?
+
+```{r}
+ggplot(spotify) +
+  geom_bar(aes(x= label), fill = "navy") + 
+  labs(title = "Frequency of labels in Spotify dataset",
+       x = "Label",
+       y = "Frequency")
+  
+```
+
+#### Exercise 2
+
+Take a random sample of $10,000$ reviews, stratified by `label`. All further exercises will be working with this smaller sample of reviews.
+
+```{r}
+# stratify means to ensure that the distribution of the labels column in the sample is similar to the distribution of labels in the full dataset
+set.seed(13)
+
+spotify$id <- seq.int(nrow(spotify))
+spotify_split <- initial_split(spotify, prop = 10001/nrow(spotify), strata = label)
+spotify_train <- training(spotify_split)
+spotify_test <- testing(spotify_split)
+
+dim(spotify_train) # 10000 reviews 
+```
+
+#### Exercise 3
+
+Tokenize the reviews into words.
+
+Remove stop words. (You can use any pre-made list of stop words of your choice.)
+
+Clean the reviews. Remove punctuation and convert the letters to lowercase.
+
+Verify that this process worked correctly.
+
+```{r clean reviews}
+spotify_train$Review <- spotify_train$Review %>% 
+  iconv(from = 'UTF-8', to = 'ASCII//TRANSLIT') %>% # convert accented characters into ASCI equivalent 
+  stri_replace_all_regex("[^\\p{L}\\p{N}\\s]", "") %>%  # remove everything except letter, number, whitespace 
+  tolower()
+```
+
+```{r tokenize into words}
+# data("stop_words") is SMART stopwords
+spotify_train_words <- spotify_train %>% 
+  unnest_tokens(word, Review)  %>% # tokenize reviews into words
+  anti_join(stop_words) # remove stop words
+
+spotify_train_words %>% 
+  count(word, sort = T) %>% 
+  head(n = 30) %>% 
+  kbl()
+```
+
+#### Exercise 4
+
+Create a bar chart of the most commonly-occurring words (not including stop words).
+
+Create bar charts of the most commonly-occurring words, broken down by `label`. What words are more common in positive reviews? What words are more common in negative reviews?
+
+```{r}
+spotify_train_words %>%
+  filter(label == 'NEGATIVE') %>% 
+  count(word, sort = TRUE) %>%
+  filter(n > 300) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(title = "Common words in NEGATIVE reviews", x = "Frequency", y = NULL)
+
+spotify_train_words %>%
+  filter(label == 'POSITIVE') %>% 
+  count(word, sort = TRUE) %>%
+  filter(n > 300) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(title = "Common words in POSITIVE reviews", x = "Frequency", y = NULL)
+```
+
+#### Exercise 5
+
+Create a word cloud of the most commonly-occurring words overall, broken down by "positive" or "negative" sentiment (using the Bing sentiment lexicon).
+
+```{r}
+spotify_train_words %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("red", "blue"),
+                   max.words = 100)
+```
+
+#### Exercise 6
+
+Calculate the tf-idf values for the words in the dataset.
+
+Find the 30 words with the largest tf-idf values.
+
+Find the 30 words with the smallest tf-idf values.
+
+```{r}
+spotify_train_tf_idf <- spotify_train_words %>% 
+  count(label, id, word) %>% 
+  bind_tf_idf(term = word,
+              document = id,
+              n = n)
+
+# 30 largest tf-idf values 
+spotify_train_tf_idf %>%
+  arrange(desc(tf_idf)) %>% 
+  head(n = 30) %>% 
+  kbl() %>%
+  scroll_box(width = "400px", height = "500px")
+
+# 30 smallest tf-idf values 
+spotify_train_tf_idf %>%
+  arrange(order(tf_idf)) %>% 
+  head(n = 30) %>% 
+  kbl() %>%
+  scroll_box(width = "400px", height = "500px")
+```
+
+#### Exercise 7
+
+Find the 30 most commonly occuring bigrams.
+
+Create graphs visualizing the networks of bigrams, broken down by `label`. That is, make one graph of the network of bigrams for the positive reviews, and one graph of the network for the negative reviews.
+
+What patterns do you notice?
+
+```{r create bigrams}
+spotify_train_bigrams <- spotify_train %>% 
+  unnest_tokens(bigram, Review, token = 'ngrams', n =2) %>% # create bigrams (pairs of words)
+  separate(bigram, c("word1", "word2"), sep = " ") %>% # split bigram into sep words
+  filter(!word1 %in% stop_words$word) %>% # filter for stop words 
+  filter(!word2 %in% stop_words$word) %>% 
+  unite(bigram, word1, word2, sep = " ") # combine words into bigram
+
+spotify_train_bigrams %>%
+  count(bigram, sort = TRUE) %>% 
+  slice(-1) %>% 
+  head(n = 30) %>%
+  kbl() %>%
+  scroll_box(width = "400px", height = "500px")
+```
+
+```{r network visualizations}
+bigram_graph_neg <- spotify_train_bigrams %>%
+  filter(label == "NEGATIVE") %>% 
+  separate(bigram, c("word1", "word2"), sep = " ") %>% 
+  count(word1, word2) %>% 
+  arrange(desc(n)) %>% 
+  slice(-1) %>% 
+  slice_head(n = 30) %>% 
+ # mutate(n = as.integer(n)) %>%
+  graph_from_data_frame()
+
+bigram_graph_pos <- spotify_train_bigrams %>%
+  filter(label == "POSITIVE") %>% 
+  separate(bigram, c("word1", "word2"), sep = " ") %>% 
+  count(word1, word2) %>% 
+  arrange(desc(n)) %>% 
+  slice(-1) %>% 
+  slice_head(n = 30) %>% 
+ # mutate(n = as.integer(n)) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type = "closed", length = unit(.095, "inches"))
+
+ggraph(bigram_graph_neg, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "pink", size = 4) +
+  geom_node_text(aes(label = name), vjust = 0.75, hjust = 0.75) +
+  ggtitle(label = "Negative Bigrams")
+
+ggraph(bigram_graph_pos, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightgreen", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  ggtitle(label = "Positive Bigrams")
+```
+
+#### Exercise 8
+
+Using the tokenized **words** and their corresponding tf-idf scores, fit a **linear support vector machine** to predict whether a given review is positive or negative.
+
+-   Split the data using stratified sampling, with 70% training and 30% testing;
+
+-   Drop any columns with zero variance;
+
+-   Fit a linear support vector machine using default values for any hyperparameters;
+
+-   Calculate the model **accuracy** on your testing data.
+
+```{r}
+spotify_tokens <- spotify_train_tf_idf %>% 
+  rename(review_label = label,
+         review_id = id) %>% 
+  group_by(review_id, review_label, word) %>% 
+  summarise(tf_idf = sum(tf_idf), .groups = 'drop') %>% 
+  pivot_wider(names_from = word, 
+              values_from = tf_idf,
+              values_fill = 0) %>% 
+  mutate(review_label = factor(review_label)) %>% 
+  select(-review_id)
+
+spotify_tokens_split <- initial_split(spotify_tokens, prop = 0.7)
+spotify_tokens_train <- training(spotify_tokens_split)
+spotify_tokens_test <- testing(spotify_tokens_split)
+
+# recipe 
+spotify_recipe <- recipe(review_label ~ ., data = spotify_tokens_train) %>% 
+  step_zv(all_predictors())
+
+prep(spotify_recipe) %>% 
+  bake(spotify_tokens_train) %>% 
+  select(review_label, everything()) %>% 
+  summary()
+
+svmlin <- svm_linear(mode = "classification", cost = 1, margin = 0.1) %>% 
+  set_engine("kernlab")
+
+svmlin_wkflow <- workflow() %>% 
+  add_model(svmlin) %>% 
+  add_recipe(spotify_recipe)
+
+svmlin_fit <- svmlin_wkflow %>% 
+  fit(data = spotify_tokens_train)
+
+save(spotify_tokens_train, file = "~/Desktop/Projects/PSTAT 134/Homework 4/spotify_tokens_train.RData")
+save(spotify_tokens_test, file = "~/Desktop/Projects/PSTAT 134/Homework 4/spotify_tokens_test.RData")
+save(svmlin_fit, file = "~/Desktop/Projects/PSTAT 134/Homework 4/svmlin_fit.RData")
+
+svmlin_pred <- predict(svmlin_fit, new_data = spotify_tokens_test)
+save(svmlin_pred, file = "~/Desktop/Projects/PSTAT 134/Homework 4/svmlin_pred.RData")
+
+svmlin_results <- bind_cols(spotify_tokens_test %>% select(review_label), 
+                            svmlin_pred)
+
+# model accuracy = 73.44% accuracy
+accuracy(svmlin_results, truth = review_label, estimate = .pred_class)
+
+spotify_tokens[, 1:5]
+```
+
+#### For 234 Students
+
+#### Exercise 9
+
+Using **either** Bag of Words or Word2Vec, extract a matrix of features. (Note: You can reduce the size of the dataset even further by working with a sample of $3,000$ reviews if need be.)
+
+```{r bag of words model}
+spotify_3000 <- spotify_train %>% sample_n(3000)
+
+# create corpus (tm library)
+corpus <- Corpus(VectorSource(spotify_3000$Review))
+corpus # 3000 reviews in this corpus (ie 3000 documents)
+
+# clean corpus
+corpus <- tm_map(corpus, removeWords, stopwords("SMART"))
+corpus <- tm_map(corpus, stripWhitespace)
+
+# document term matrix = frequency table with one row per edocument nad one column per tooken
+dtm <- DocumentTermMatrix(corpus)
+dtm_matrix <- as.matrix(dtm)
+
+# we can verify the words in the first review 
+dtm_matrix[1:5, 1:10]
+spotify_3000$Review[1]
+
+# convert to data.table type
+dtm_df <- as.data.table(dtm_matrix)
+dtm_df[1:5, 1:10]
+
+# add the response variable 
+dtm_df$review_label <- as.factor(spotify_3000$label)
+```
+
+#### Exercise 10
+
+Fit and tune a **logistic regression model, using lasso regularization**. Follow the same procedure as before, with a few changes:
+
+-   Stratified sampling, with a 70/30 split;
+
+-   Drop any columns with zero variance;
+
+-   Tune `penalty`, using the default values;
+
+-   Calculate your best model's **accuracy** on the testing data.
+
+```{r logistic regression model for bag of words}
+# stratified sample, split data
+spotify_3000_split <- initial_split(dtm_df, prop = 0.7, strata = review_label)
+spotify_3000_test <- testing(spotify_3000_split)
+spotify_3000_train <- training(spotify_3000_split)
+spotify_3000_folds <- vfold_cv(spotify_3000_train, v = 5, strata = review_label)
+
+# recipe to drop any columns with zero variance
+spotify_3000_recipe <- recipe(review_label ~., data = spotify_3000_train) %>% 
+  step_zv(all_predictors())
+
+# prep and bake 
+prep(spotify_3000_recipe) %>% bake(spotify_3000_train) %>% 
+  head()
+
+# lasso regression; mixture = 1 for lasso
+lasso_reg <- logistic_reg(penalty = tune(), mixture = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("glmnet")
+
+# create workflow w/ recipe and model
+lasso_wkflow <- workflow() %>% 
+  add_model(lasso_reg) %>% 
+  add_recipe(spotify_3000_recipe)
+
+# define grid for tuning the penalty (lambda)
+lasso_grid <- grid_regular(penalty(), levels = 5) # 5 different values to try out 
+# tune the model using cross validation
+lasso_tune <- tune_grid(lasso_wkflow, resamples = spotify_3000_folds)
+
+best_lasso <- lasso_tune %>% 
+  select_best("accuracy")
+
+final_lasso_wkflow <- lasso_wkflow %>% 
+  finalize_workflow(best_lasso)
+
+final_lasso_fit <- final_lasso_wkflow %>% 
+  fit(spotify)
+```
